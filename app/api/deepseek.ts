@@ -111,13 +111,81 @@ async function request(req: NextRequest) {
   try {
     const res = await fetch(fetchUrl, fetchOptions);
 
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let reasoningBuffer = "";
+    const LOG_THRESHOLD = 32;
+
+    (async () => {
+      const reader = res.body?.getReader();
+      if (!reader) return;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split("\n\n");
+        buffer = chunks.pop() || "";
+
+        for (const chunk of chunks) {
+          const lines = chunk
+            .split("\n")
+            .filter((line) => line.startsWith("data:"));
+          for (const line of lines) {
+            try {
+              const jsonStr = line.replace(/^data: /, "").trim();
+              if (jsonStr === "[DONE]") continue;
+
+              const jsonData = JSON.parse(jsonStr);
+              if (jsonData.choices?.[0]?.delta?.reasoning_content) {
+                const reasoningContent =
+                  jsonData.choices[0].delta.reasoning_content;
+
+                reasoningBuffer += reasoningContent;
+                if (reasoningBuffer.length >= LOG_THRESHOLD) {
+                  const linesToLog = reasoningBuffer.split("\n");
+                  for (let i = 0; i < linesToLog.length; i++) {
+                    const line = linesToLog[i];
+                    if (i === 0) {
+                      console.log("[DeepSeek Reasoning]", line);
+                    } else {
+                      console.log("[DeepSeek Reasoning]", line);
+                    }
+                  }
+                  reasoningBuffer = "";
+                }
+              }
+            } catch (e) {
+              // silently ignore
+            }
+          }
+        }
+        await writer.write(value);
+      }
+      if (reasoningBuffer.length > 0) {
+        const linesToLog = reasoningBuffer.split("\n");
+        for (let i = 0; i < linesToLog.length; i++) {
+          const line = linesToLog[i];
+          if (i === 0) {
+            console.log("[DeepSeek Reasoning]", line);
+          } else {
+            console.log("[DeepSeek Reasoning]", line);
+          }
+        }
+      }
+      await writer.close();
+    })();
+
     // to prevent browser prompt for credentials
     const newHeaders = new Headers(res.headers);
     newHeaders.delete("www-authenticate");
     // to disable nginx buffering
     newHeaders.set("X-Accel-Buffering", "no");
 
-    return new Response(res.body, {
+    return new Response(readable, {
       status: res.status,
       statusText: res.statusText,
       headers: newHeaders,

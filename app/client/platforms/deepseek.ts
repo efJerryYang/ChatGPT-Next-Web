@@ -57,7 +57,10 @@ export class DeepSeekApi implements LLMApi {
   }
 
   extractMessage(res: any) {
-    return res.choices?.at(0)?.message?.content ?? "";
+    const reasoningContent =
+      res.choices?.at(0)?.message?.reasoning_content ?? "";
+    const content = res.choices?.at(0)?.message?.content ?? "";
+    return content;
   }
 
   speech(options: SpeechOptions): Promise<ArrayBuffer> {
